@@ -1,12 +1,18 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
-import hostingConfig from "./.openai/hosting.json";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { readExecutionProfile } from "./scripts/execution-profile.mjs";
 import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
+const sitesHostingConfigPath = resolve(process.cwd(), ".openai", "hosting.json");
+const hasSitesHostingConfig = existsSync(sitesHostingConfigPath);
+const hostingConfig = hasSitesHostingConfig
+  ? JSON.parse(readFileSync(sitesHostingConfigPath, "utf8")) as { d1?: string; r2?: string }
+  : {};
 const { d1, r2 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
@@ -57,7 +63,7 @@ export default defineConfig(async () => {
     },
     plugins: [
       vinext(),
-      sites({ mockAuth: !managedLinux }),
+      ...(hasSitesHostingConfig ? [sites({ mockAuth: !managedLinux })] : []),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         inspectorPort: false,
