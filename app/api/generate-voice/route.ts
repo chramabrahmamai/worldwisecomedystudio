@@ -27,20 +27,35 @@ export async function POST(request: NextRequest) {
   if (!narration || narration.length > 2000) return NextResponse.json({ error: "INVALID_NARRATION" }, { status: 400 });
 
   try {
-    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-      method: "POST",
-      headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: process.env.GEMINI_TTS_MODEL || "gemini-3.1-flash-tts-preview",
-        input: `Read the following approved script exactly as written. Do not add, remove, or change words. Use a warm, energetic news-comedy delivery with natural pauses.\n\n${narration}`,
-        response_format: { type: "audio" },
-        generation_config: { speech_config: [{ voice: body.voice || "Kore" }] },
-      }),
-    });
-    if (!response.ok) return NextResponse.json({ error: "VOICE_PROVIDER_ERROR" }, { status: 502 });
-    const payload = await response.json() as { output_audio?: { data?: string } };
-    const audio = payload.output_audio?.data;
-    if (!audio) return NextResponse.json({ error: "EMPTY_VOICE_RESPONSE" }, { status: 502 });
+    const configuredModel = process.env.GEMINI_TTS_MODEL;
+    const attempts = configuredModel ? [configuredModel, configuredModel, configuredModel] : ["gemini-3.1-flash-tts-preview", "gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
+    let audio = "";
+    let lastStatus = 502;
+    let lastReason = "UNKNOWN";
+    for (const model of attempts) {
+      const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+        method: "POST",
+        headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          input: `Synthesize speech for the transcript below. Read only the transcript, exactly as written. Use a warm, energetic news-comedy delivery with natural pauses.\n\nTRANSCRIPT:\n${narration}`,
+          response_format: { type: "audio" },
+          generation_config: { speech_config: [{ voice: body.voice || "Kore" }] },
+        }),
+      });
+      lastStatus = response.status;
+      if (response.ok) {
+        const payload = await response.json() as { output_audio?: { data?: string } };
+        audio = payload.output_audio?.data || "";
+        if (audio) break;
+        lastReason = "EMPTY_AUDIO";
+      } else {
+        const payload = await response.json().catch(() => ({})) as { error?: { status?: string } };
+        lastReason = payload.error?.status || `HTTP_${response.status}`;
+        if (response.status === 400 || response.status === 401 || response.status === 403) break;
+      }
+    }
+    if (!audio) return NextResponse.json({ error: "VOICE_PROVIDER_ERROR", reason: lastReason, providerStatus: lastStatus }, { status: 502 });
     const wav = wavFromPcm(decodeBase64(audio));
     return new NextResponse(wav, { headers: { "Content-Type": "audio/wav", "Cache-Control": "no-store", "Content-Length": String(wav.byteLength) } });
   } catch {

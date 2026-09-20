@@ -42,8 +42,8 @@ export default function Home(){
   try{
    const narration=aiPackage.beats.map(beat=>beat.narration.trim()).filter(Boolean).join(" ");
    const response=await fetch("/api/generate-voice",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({narration,voice:"Kore"})});
-   if(!response.ok){const data=await response.json().catch(()=>({})) as {error?:string};throw new Error(data.error||"VOICE_FAILED")}
-   setRenderProgress(15);const audioBytes=await response.arrayBuffer();audioContext=new AudioContext();const audioBuffer=await audioContext.decodeAudioData(audioBytes.slice(0));
+   if(!response.ok){const data=await response.json().catch(()=>({})) as {error?:string;reason?:string;providerStatus?:number};throw new Error(data.reason||data.error||`VOICE_HTTP_${response.status}`)}
+   setRenderProgress(15);const audioBytes=await response.arrayBuffer();audioContext=new AudioContext();await audioContext.resume();const audioBuffer=await audioContext.decodeAudioData(audioBytes.slice(0));
    const canvas=document.createElement("canvas");canvas.width=1080;canvas.height=1920;const ctx=canvas.getContext("2d");if(!ctx)throw new Error("CANVAS_FAILED");
    const canvasStream=canvas.captureStream(30);const destination=audioContext.createMediaStreamDestination();const source=audioContext.createBufferSource();source.buffer=audioBuffer;source.connect(destination);
    const stream=new MediaStream([...canvasStream.getVideoTracks(),...destination.stream.getAudioTracks()]);
@@ -64,7 +64,7 @@ export default function Home(){
    };
    draw(0);recorder.start(250);source.start(startAt);const tick=()=>{const elapsed=Math.max(0,audioContext!.currentTime-startAt);draw(elapsed);setRenderProgress(15+Math.round(Math.min(1,elapsed/duration)*82));if(elapsed<duration)requestAnimationFrame(tick)};requestAnimationFrame(tick);
    await new Promise<void>(resolve=>{source.onended=()=>resolve()});await new Promise(resolve=>setTimeout(resolve,180));recorder.stop();const blob=await finished;stream.getTracks().forEach(track=>track.stop());const url=URL.createObjectURL(blob);setVideoUrl(url);setRenderProgress(100);setStage("video");
-  }catch(error){setRenderError(error instanceof Error&&error.message==="AI_SETUP_REQUIRED"?"Gemini is not configured.":"Video render failed. Try Chrome or Edge, then render again.")}finally{if(audioContext)void audioContext.close();setRendering(false)}
+  }catch(error){const code=error instanceof Error?error.message:"UNKNOWN";const message=code==="AI_SETUP_REQUIRED"?"Gemini API key is missing in Cloudflare.":code.includes("PERMISSION_DENIED")||code.includes("HTTP_403")?"Gemini TTS is not enabled for this API key/project.":code.includes("RESOURCE_EXHAUSTED")||code.includes("HTTP_429")?"Gemini TTS free quota is exhausted. Wait and try again.":code.includes("UNAUTHENTICATED")||code.includes("HTTP_401")?"Gemini rejected the API key.":code.includes("NotSupported")||code.includes("MediaRecorder")?"This browser cannot record WebM. Use current Chrome or Edge.":`Render stopped at: ${code}. Try once more; if it repeats, this code identifies the cause.`;setRenderError(message)}finally{if(audioContext)void audioContext.close();setRendering(false)}
  };
  return <main className="app-shell">
   <header className="masthead"><div className="logo"><span><Laugh size={22}/></span>WorldWise<em>STUDIO</em></div><div className="steps"><span className={stage!=="setup"?"done":"active"}><b>1</b> Script</span><i/><span className={stage==="video"||stage==="published"?"done":stage==="script"?"active":""}><b>2</b> Render</span><i/><span className={stage==="published"?"done":stage==="video"?"active":""}><b>3</b> Approve</span><i/><span className={stage==="published"?"active":""}><b>4</b> Publish</span></div><div className="head-actions"><button className="icon-button"><Search size={19}/></button><Button className="new-video"><Sparkles size={16}/> New video</Button><button className="menu"><Menu/></button></div></header>
