@@ -19,6 +19,22 @@ function decodeBase64(value: string) {
   return bytes;
 }
 
+type AudioPayload = {
+  output_audio?: { data?: string; sample_rate?: number };
+  steps?: Array<{ type?: string; content?: Array<{ type?: string; data?: string; sample_rate?: number }> }>;
+};
+
+function audioFromPayload(payload: AudioPayload) {
+  if (payload.output_audio?.data) return { data: payload.output_audio.data, sampleRate: payload.output_audio.sample_rate || 24000 };
+  for (const step of payload.steps || []) {
+    if (step.type !== "model_output") continue;
+    for (const content of step.content || []) {
+      if (content.type === "audio" && content.data) return { data: content.data, sampleRate: content.sample_rate || 24000 };
+    }
+  }
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "AI_SETUP_REQUIRED" }, { status: 503 });
@@ -29,7 +45,7 @@ export async function POST(request: NextRequest) {
   try {
     const configuredModel = process.env.GEMINI_TTS_MODEL;
     const attempts = configuredModel ? [configuredModel, configuredModel, configuredModel] : ["gemini-3.1-flash-tts-preview", "gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
-    let audio = "";
+    let audio: { data: string; sampleRate: number } | null = null;
     let lastStatus = 502;
     let lastReason = "UNKNOWN";
     for (const model of attempts) {
@@ -45,8 +61,8 @@ export async function POST(request: NextRequest) {
       });
       lastStatus = response.status;
       if (response.ok) {
-        const payload = await response.json() as { output_audio?: { data?: string } };
-        audio = payload.output_audio?.data || "";
+        const payload = await response.json() as AudioPayload;
+        audio = audioFromPayload(payload);
         if (audio) break;
         lastReason = "EMPTY_AUDIO";
       } else {
@@ -56,7 +72,7 @@ export async function POST(request: NextRequest) {
       }
     }
     if (!audio) return NextResponse.json({ error: "VOICE_PROVIDER_ERROR", reason: lastReason, providerStatus: lastStatus }, { status: 502 });
-    const wav = wavFromPcm(decodeBase64(audio));
+    const wav = wavFromPcm(decodeBase64(audio.data), audio.sampleRate);
     return new NextResponse(wav, { headers: { "Content-Type": "audio/wav", "Cache-Control": "no-store", "Content-Length": String(wav.byteLength) } });
   } catch {
     return NextResponse.json({ error: "VOICE_GENERATION_FAILED" }, { status: 502 });
